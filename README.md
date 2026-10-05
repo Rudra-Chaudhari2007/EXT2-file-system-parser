@@ -1,39 +1,685 @@
-# EXT2 Filesystem Parser and File Manager
+# EXT2 Filesystem Parser & File Manager
 
-A C++ program that reads and modifies an **EXT2 filesystem disk image**. The project works directly with the filesystem structures stored inside the image instead of relying on the operating system's filesystem APIs.
+A C++ program that directly reads, parses, and modifies an **EXT2 filesystem disk image** at the byte level.
 
-## Features
+Instead of using normal operating-system filesystem APIs, this project manually locates and interprets EXT2 structures such as the **Superblock, Block Group Descriptors, inode tables, directory entries, bitmaps, and data blocks**.
 
-The program currently supports:
+The filesystem image used by the project is:
 
-- Reading and displaying the EXT2 **Superblock**
-- Reading and displaying **Block Group Descriptors**
-- Traversing directories recursively
-- Displaying directory entries and inode numbers
-- Changing the current working directory using `cd`
-- Finding a file inside the current working directory
-- Reading and displaying file contents
-- Overwriting an existing file
-- Appending data to an existing file
-- Finding free blocks using the block usage bitmap
-- Allocating blocks and updating filesystem free-block counts
-- Updating the inode's file size
-- Handling direct, single-indirect, double-indirect, and triple-indirect blocks while traversing directories
+```text
+disk-backpup.img
+```
 
-> **Current file read/write limitation:** file reading and updating currently use the 12 direct inode block pointers. The directory traversal code can additionally follow indirect pointers.
+> **Warning:** This program opens the filesystem image with read/write permissions. Always keep a backup of the image before testing file update operations.
 
 ---
 
-## Project Structure
+## Project Overview
 
-The main program is implemented in a single C++ source file.
+The project provides a small command-line interface for exploring and modifying an EXT2 filesystem image.
 
-Important components:
+The main filesystem flow implemented by the project is:
+
+```text
+                 EXT2 Disk Image
+                       |
+                       v
+                  Superblock
+                       |
+                       v
+             Block Group Descriptor
+                       |
+          +------------+------------+
+          |            |            |
+          v            v            v
+     Block Bitmap  Inode Bitmap  Inode Table
+                                      |
+                                      v
+                                    Inode
+                                      |
+                              +-------+-------+
+                              |               |
+                              v               v
+                       Directory Entries   Data Blocks
+                              |               |
+                              v               v
+                           Filename       File Contents
+```
+
+The program can:
+
+- Inspect filesystem metadata
+- Traverse directories
+- Change the current directory
+- Find files
+- Read file contents
+- Overwrite existing files
+- Append data to existing files
+- Allocate additional data blocks when required
+- Update filesystem metadata after allocation
+
+---
+
+# Features
+
+## 1. Superblock Parsing
+
+The program reads the EXT2 Superblock from its standard location at byte offset:
+
+```text
+1024
+```
+
+It extracts important filesystem information including:
+
+- Total number of inodes
+- Total number of blocks
+- Reserved blocks
+- Free blocks
+- Free inodes
+- First data block
+- Block size
+- Blocks per group
+- Inodes per group
+- Inode size
+
+Run:
+
+```text
+prompt => superblock
+```
+
+Example:
+
+```text
+===== SUPERBLOCK =====
+Inodes count      : ...
+Blocks count      : ...
+Free blocks       : ...
+Free inodes       : ...
+First data block  : ...
+Block size        : ...
+Blocks per group  : ...
+Inodes per group  : ...
+Inode size        : ...
+```
+
+---
+
+## 2. Block Group Descriptor Reading
+
+EXT2 divides the filesystem into block groups. Each group has a Block Group Descriptor containing locations and information about important filesystem structures.
+
+The program displays:
+
+- Block usage bitmap location
+- Inode usage bitmap location
+- Inode table location
+- Number of free blocks
+- Number of free inodes
+- Number of directories
+
+Run:
+
+```text
+prompt => bgd
+```
+
+---
+
+## 3. Recursive Directory Traversal
+
+The `traverser()` functionality starts from the root directory, inode `2`, and recursively explores directories.
+
+The traversal follows:
+
+```text
+Directory Inode
+      |
+      v
+Directory Data Blocks
+      |
+      v
+Directory Entries
+      |
+      v
+Filename + Inode Number
+      |
+      v
+Child Directory
+      |
+      v
+Repeat
+```
+
+Directory entries contain:
+
+```text
++0   inode number
++4   record length (rec_len)
++6   name length (name_len)
++7   file type
++8   filename
+```
+
+The program uses `rec_len` to locate the next directory entry.
+
+The special entries:
+
+```text
+.
+..
+```
+
+are skipped during recursive traversal.
+
+Example:
+
+```text
+Name: home
+Inode Number : 12
+
+    Name: user
+    Inode Number : 15
+
+        Name: notes.txt
+        Inode Number : 18
+```
+
+### Indirect Block Support
+
+Unlike file reading/updating, directory traversal supports all levels of EXT2 block pointers:
+
+```text
+Direct
+   |
+   v
+Single Indirect
+   |
+   v
+Double Indirect
+   |
+   v
+Triple Indirect
+```
+
+This is handled using the project's block-processing functions such as:
+
+```text
+process_block()
+process_indirect()
+traverser()
+```
+
+---
+
+# 4. Change Directory
+
+The program maintains a `current_dir` inode, initially set to the root inode:
+
+```text
+2
+```
+
+The command:
+
+```text
+cd <directory_name>
+```
+
+changes the current directory.
+
+Example:
+
+```text
+prompt => cd home
+changed directory to: home
+```
+
+Before changing directories, the program checks the directory entry's file type.
+
+Therefore, attempting:
+
+```text
+cd file.txt
+```
+
+will not treat a regular file as a directory.
+
+---
+
+# 5. Finding Files
+
+The `find_file()` function searches for a filename inside the current working directory.
+
+The process is:
+
+```text
+Current Directory
+       |
+       v
+Directory Data Blocks
+       |
+       v
+Directory Entries
+       |
+       v
+Compare Filename
+       |
+       v
+Inode Number
+```
+
+If the file is found, its inode number is returned.
+
+If it is not found, the function returns:
+
+```text
+0
+```
+
+This functionality is used by both:
+
+```text
+read
+update
+```
+
+---
+
+# 6. Reading File Contents
+
+The program can locate and display the contents of an existing file.
+
+The process is:
+
+```text
+Filename
+   |
+   v
+find_file()
+   |
+   v
+Inode Number
+   |
+   v
+Read Inode
+   |
+   v
+Read i_size
+   |
+   v
+Read i_block[]
+   |
+   v
+Data Blocks
+   |
+   v
+File Contents
+```
+
+The inode's `i_size` is used to determine the exact number of bytes that belong to the file.
+
+This prevents unused bytes in the final filesystem block from being printed.
+
+Run:
+
+```text
+prompt => read
+filename
+```
+
+Example:
+
+```text
+prompt => read
+readthis.txt
+
+Hello from EXT2!
+```
+
+### Current Limitation
+
+File reading currently uses the inode's **12 direct block pointers**:
+
+```text
+i_block[0] ... i_block[11]
+```
+
+Therefore, files requiring indirect block addressing are not currently supported by the file-reading implementation.
+
+---
+
+# 7. Updating Existing Files
+
+The `update` command allows an existing file to be modified in two ways:
+
+```text
+1. Overwrite
+2. Append
+```
+
+Run:
+
+```text
+prompt => update
+```
+
+The program asks for:
+
+1. Filename
+2. Update type
+3. Data to write
+
+Example:
+
+```text
+prompt => update
+
+Enter Filename: test.txt
+
+1. Overwrite
+2. Append
+Enter choice: 2
+
+Enter data: More data
+```
+
+---
+
+## Overwrite
+
+Overwrite starts writing from the beginning of the file.
+
+Example:
+
+```text
+Old:
+Hello World
+
+New data:
+Goodbye
+
+Result:
+Goodbye
+```
+
+The inode's `i_size` is updated to reflect the new file size.
+
+---
+
+## Append
+
+Append starts writing at the current end of the file.
+
+Example:
+
+```text
+Existing:
+Hello
+
+Data:
+ World
+
+Result:
+Hello World
+```
+
+The new file size becomes:
+
+```text
+old_size + new_data_size
+```
+
+---
+
+# 8. Block Allocation
+
+When an update requires more filesystem space, the program searches the EXT2 block bitmap for a free block.
+
+The allocation process is:
+
+```text
+File requires more space
+          |
+          v
+Read Block Bitmap
+          |
+          v
+Find free bit
+          |
+          v
+Calculate filesystem block number
+          |
+          v
+Mark block as allocated
+          |
+          v
+Update inode block pointer
+          |
+          v
+Write file data
+          |
+          v
+Update filesystem counters
+```
+
+In the block bitmap:
+
+```text
+0 -> Free
+1 -> Allocated
+```
+
+The program checks each bit using:
+
+```cpp
+byte = i / 8;
+bit  = i % 8;
+```
+
+A free block is marked as allocated using:
+
+```cpp
+buffer[byte] |= (1 << bit);
+```
+
+---
+
+# 9. Updating Filesystem Metadata
+
+When a new block is allocated, the program updates the relevant filesystem metadata.
+
+This includes:
+
+```text
+Block Bitmap
+      |
+      v
+Block Group Descriptor
+      |
+      v
+Superblock
+      |
+      v
+Inode
+```
+
+Specifically, it updates:
+
+- Block bitmap
+- Block Group Descriptor free-block count
+- Superblock free-block count
+- Inode block pointer
+- Inode file size
+
+This is important because filesystem metadata must remain consistent with the actual data stored in the image.
+
+---
+
+# EXT2 Architecture Used
+
+## Superblock
+
+The Superblock stores global filesystem information.
+
+The project reads it from:
+
+```text
+byte offset = 1024
+```
+
+The block size is calculated using:
+
+```cpp
+uint32_t block_size = 1024 << s_log_block_size;
+```
+
+For example:
+
+```text
+s_log_block_size = 0 -> 1024 bytes
+s_log_block_size = 1 -> 2048 bytes
+s_log_block_size = 2 -> 4096 bytes
+```
+
+---
+
+## Block Group Descriptor
+
+The Block Group Descriptor provides the locations of structures such as:
+
+```text
+Block Bitmap
+Inode Bitmap
+Inode Table
+```
+
+It also contains free-block, free-inode, and directory counts.
+
+---
+
+## Inodes
+
+An inode represents a file or directory and stores metadata about it.
+
+Important fields used by this project include:
+
+```text
+i_size
+i_block[]
+```
+
+The inode contains 15 block pointers:
+
+```text
+i_block[0]  - i_block[11] -> Direct blocks
+i_block[12]              -> Single indirect
+i_block[13]              -> Double indirect
+i_block[14]              -> Triple indirect
+```
+
+The project uses indirect pointers for directory traversal.
+
+File reading and updating currently use only the 12 direct pointers.
+
+---
+
+# Directory Entry Structure
+
+An EXT2 directory is composed of directory entries.
+
+Each entry follows this layout:
+
+```text
+Offset 0   : inode number   (4 bytes)
+Offset 4   : rec_len        (2 bytes)
+Offset 6   : name_len       (1 byte)
+Offset 7   : file_type      (1 byte)
+Offset 8   : filename
+```
+
+The `file_type` value used by the program includes:
+
+```text
+1 -> Regular file
+2 -> Directory
+```
+
+`rec_len` tells the program how many bytes to move forward to reach the next directory entry.
+
+---
+
+# Inode Location
+
+To locate an inode, the program determines:
+
+```text
+Inode Number
+      |
+      v
+Block Group
+      |
+      v
+Index inside Block Group
+      |
+      v
+Inode Table
+      |
+      v
+Actual Inode
+```
+
+The inode table location comes from the corresponding Block Group Descriptor.
+
+---
+
+# Little-Endian Conversion
+
+EXT2 stores multi-byte values using **little-endian byte order**.
+
+The project contains conversion functionality for both:
+
+```text
+Raw bytes -> Integer
+```
+
+and:
+
+```text
+Integer -> Raw bytes
+```
+
+For example:
+
+```text
+80 00 00 00 -> 128
+00 04 00 00 -> 1024
+```
+
+These conversions are important when reading and modifying filesystem metadata.
+
+They are used for values such as:
+
+- Inode file size
+- Inode block pointers
+- Free block counts
+- Superblock values
+- Block Group Descriptor values
+
+---
+
+# Project Structure
+
+The main implementation is contained in a C++ source file.
+
+Important structures and functions include:
 
 ```text
 Superblock
 Block_Group_Descriptor
 Inode
+
 converter()
 name_converter()
 
@@ -62,368 +708,25 @@ main()
 
 ---
 
-## EXT2 Concepts Used
+# Available Commands
 
-The program works directly with important EXT2 filesystem structures.
-
-### 1. Superblock
-
-The Superblock contains global information about the filesystem, such as:
-
-- Total number of inodes
-- Total number of blocks
-- Number of free blocks
-- Number of free inodes
-- First data block
-- Block size information
-- Blocks per group
-- Inodes per group
-- Inode size
-
-The program reads the Superblock from byte offset `1024` in the disk image.
-
-```cpp
-file.seekg(1024);
-```
-
-The block size is calculated using:
-
-```cpp
-uint32_t block_size = 1024 << sb.log_block_size;
-```
+| Command | Description |
+|---|---|
+| `superblock` | Display EXT2 Superblock information |
+| `bgd` | Display Block Group Descriptor information |
+| `traverser` | Recursively traverse the filesystem |
+| `cd <name>` | Change the current directory |
+| `read` | Read an existing file |
+| `update` | Overwrite or append to an existing file |
+| `exit` | Exit the program |
 
 ---
 
-### 2. Block Group Descriptor
+# Compilation
 
-Each block group has a descriptor containing addresses of important structures:
+The project requires a C++ compiler such as `g++`.
 
-- Block usage bitmap
-- Inode usage bitmap
-- Inode table
-- Number of unallocated blocks
-- Number of unallocated inodes
-- Number of directories
-
-The program reads block group descriptors starting from byte offset `2048`.
-
----
-
-### 3. Inodes
-
-An inode stores information about a file or directory.
-
-This project uses:
-
-- `i_size` at offset `+4`
-- `i_block[]` starting at offset `+40`
-
-The inode contains 15 block pointers:
-
-```text
-i_block[0]  - i_block[11]  → Direct blocks
-i_block[12]               → Single indirect
-i_block[13]               → Double indirect
-i_block[14]               → Triple indirect
-```
-
----
-
-## Directory Entries
-
-An EXT2 directory contains directory entries.
-
-Each entry contains:
-
-```text
-+0   : inode number      (4 bytes)
-+4   : record length     (2 bytes)
-+6   : name length       (1 byte)
-+7   : file type         (1 byte)
-+8   : filename
-```
-
-The program reads these fields using:
-
-```cpp
-uint32_t entry_inode = converter(buffer + len, 4);
-uint32_t rec_len = converter(buffer + len + 4, 2);
-uint32_t name_len = converter(buffer + len + 6, 1);
-uint32_t file_type = converter(buffer + len + 7, 1);
-```
-
-File types used by the program:
-
-```text
-1 → Regular file
-2 → Directory
-```
-
-`rec_len` tells the program how many bytes to move forward to reach the next directory entry.
-
----
-
-## Directory Traversal
-
-The `traverser()` function starts from an inode and follows its block pointers.
-
-It processes:
-
-```text
-Direct blocks
-     ↓
-Single indirect
-     ↓
-Double indirect
-     ↓
-Triple indirect
-```
-
-The `process_block()` function reads directory entries from a single directory data block.
-
-The `process_indirect()` function recursively follows indirect block pointers.
-
-The traversal also uses a `depth` value to indent nested directories.
-
-Example:
-
-```text
-Name: folder1
-Inode Number : 12
-
-    Name: folder2
-    Inode Number : 15
-
-        Name: file.txt
-        Inode Number : 18
-```
-
-The special directory entries `.` and `..` are skipped during recursive traversal.
-
----
-
-## Finding a File
-
-The `find_file()` function searches for a filename inside the **current working directory**.
-
-It:
-
-1. Finds the inode of the current directory.
-2. Reads its direct data blocks.
-3. Examines every directory entry.
-4. Compares the entry name with the requested filename.
-5. Returns the inode number if found.
-6. Returns `0` if the file is not found.
-
-This function is used by both the `read` and `update` commands.
-
----
-
-## Changing Directory
-
-The `change_directory()` function searches the current directory for a requested name.
-
-It checks:
-
-```cpp
-if(file_type == 2)
-```
-
-to make sure that the requested entry is a directory.
-
-If it is a directory, its inode number becomes the new `current_dir`.
-
-Example:
-
-```text
-prompt => cd folder1
-changed directory to: folder1
-```
-
-If the entry exists but is a regular file:
-
-```text
-file.txt is not a directory!
-```
-
-If the directory does not exist:
-
-```text
-Directory not found!
-```
-
----
-
-## Reading a File
-
-The `read_file()` function reads and displays the contents of a file.
-
-The process is:
-
-```text
-Filename
-   ↓
-find_file()
-   ↓
-Inode number
-   ↓
-Read inode
-   ↓
-Read file size
-   ↓
-Read direct block pointers
-   ↓
-Read data blocks
-   ↓
-Print contents
-```
-
-The function uses the file size stored in the inode so that it does not print unused bytes from the final block.
-
-The current implementation reads the first 12 direct data blocks.
-
----
-
-## Finding a Free Block
-
-The `find_free_block()` function searches the block usage bitmap.
-
-In the bitmap:
-
-```text
-0 → Free block
-1 → Allocated block
-```
-
-For every block:
-
-```cpp
-uint32_t byte = i / 8;
-uint32_t bit = i % 8;
-```
-
-The program checks whether the corresponding bit is zero.
-
-When a free block is found, the actual filesystem block number is calculated and returned.
-
----
-
-## Allocating a Block
-
-The `allocate_block()` function:
-
-1. Calls `find_free_block()`.
-2. Finds the free block.
-3. Marks the corresponding bitmap bit as allocated.
-4. Decreases the block group's free-block count.
-5. Decreases the Superblock's free-block count.
-6. Writes the updated values back to the disk image.
-
-The bitmap update is performed using:
-
-```cpp
-buffer[byte] |= (1 << bit);
-```
-
-This sets only the selected bit to `1` while preserving the other bits in that byte.
-
----
-
-## Updating Files
-
-The `update_file()` function supports two operations:
-
-### Overwrite
-
-```text
-Old:
-Hello World
-
-New data:
-Goodbye
-
-Result:
-Goodbye
-```
-
-The new data starts at position `0`.
-
-### Append
-
-```text
-Old:
-Hello
-
-New data:
- World
-
-Result:
-Hello World
-```
-
-The new data starts at the old file size.
-
-The function calculates:
-
-```cpp
-required_blocks =
-    (new_size + block_size - 1) / block_size;
-```
-
-This determines how many blocks are required to store the new file.
-
-If additional blocks are needed, `allocate_block()` is called and the new block pointer is written into the inode.
-
-Finally, the inode's file size is updated.
-
----
-
-## Important Current Limitation
-
-The current `update_file()` implementation allocates and uses the **12 direct block pointers**:
-
-```text
-i_block[0] ... i_block[11]
-```
-
-Therefore, the current file update functionality should not be used for files requiring more than 12 data blocks.
-
-The directory traversal implementation, however, already contains support for:
-
-- Single indirect blocks
-- Double indirect blocks
-- Triple indirect blocks
-
-Future work can extend `read_file()` and `update_file()` to use those indirect blocks as well.
-
----
-
-## Disk Image
-
-The program currently opens:
-
-```text
-/home/rudra/projects/disk-backpup.img
-```
-
-The image is opened using:
-
-```cpp
-fstream file(
-    "/home/rudra/projects/disk-backpup.img",
-    ios::in | ios::out | ios::binary
-);
-```
-
-This allows both reading and writing.
-
-Make sure the disk image exists at this location before running the program.
-
----
-
-## Compilation
-
-Compile using a C++ compiler such as `g++`:
+Compile:
 
 ```bash
 g++ main.cpp -o ext2
@@ -437,135 +740,27 @@ Run:
 
 ---
 
-## Available Commands
+# Filesystem Image
 
-After starting the program, the program displays:
-
-```text
-prompt =>
-```
-
-### `superblock`
-
-Displays the contents of the Superblock.
+The program currently opens:
 
 ```text
-prompt => superblock
+/home/rudra/projects/disk-backpup.img
 ```
+
+The image is opened using:
+
+```cpp
+ios::in | ios::out | ios::binary
+```
+
+because the program performs both read and write operations.
+
+If the image is located elsewhere, update the path in the source code before compilation.
 
 ---
 
-### `bgd`
-
-Displays the Block Group Descriptors.
-
-```text
-prompt => bgd
-```
-
----
-
-### `traverser`
-
-Traverses the filesystem starting from the root directory (inode `2`).
-
-```text
-prompt => traverser
-```
-
----
-
-### `cd`
-
-Changes the current working directory.
-
-```text
-prompt => cd folder_name
-```
-
-Example:
-
-```text
-prompt => cd test
-changed directory to: test
-```
-
----
-
-### `read`
-
-Reads and displays a file from the current working directory.
-
-```text
-prompt => read
-filename
-```
-
-Example:
-
-```text
-prompt => read
-readthis.txt
-```
-
-If the file exists, its contents are printed.
-
-If it does not exist:
-
-```text
-File Not Found!!
-```
-
----
-
-### `update`
-
-Updates an existing file.
-
-```text
-prompt => update
-Enter Filename: test.txt
-
-1. Overwrite
-2. Append
-Enter choice:
-```
-
-For overwrite:
-
-```text
-Enter choice: 1
-Enter data: New contents
-```
-
-For append:
-
-```text
-Enter choice: 2
-Enter data: Additional contents
-```
-
-If the file does not exist:
-
-```text
-File Not Found
-```
-
----
-
-### `exit`
-
-Exits the program.
-
-```text
-prompt => exit
-```
-
----
-
-## Example Usage
-
-A typical session can look like:
+# Example Session
 
 ```text
 prompt => superblock
@@ -575,110 +770,141 @@ Inodes count      : ...
 Blocks count      : ...
 Free blocks       : ...
 Free inodes       : ...
+First data block  : ...
 Block size        : ...
 Blocks per group  : ...
 Inodes per group  : ...
 Inode size        : ...
 
+
 prompt => traverser
 
-Name: folder
+Name: home
 Inode Number : 12
 
     Name: test.txt
     Inode Number : 15
 
-prompt => cd folder
-changed directory to: folder
+
+prompt => cd home
+
+changed directory to: home
+
 
 prompt => read
+
 test.txt
+
 Hello from EXT2!
 
+
 prompt => update
+
 Enter Filename: test.txt
 
 1. Overwrite
 2. Append
+
 Enter choice: 2
+
 Enter data: More data
 
+
 prompt => read
+
 test.txt
+
 Hello from EXT2!More data
+
 
 prompt => exit
 ```
 
 ---
 
-## Byte Conversion
+# Limitations
 
-EXT2 stores multi-byte values in little-endian format.
+This is an **educational EXT2 filesystem implementation**, not a complete production filesystem driver.
 
-The program uses:
+Current limitations include:
 
-```cpp
-uint32_t converter(uint8_t* buffer, int n)
-```
-
-to convert bytes from the disk image into an integer.
-
-It also uses an overloaded version:
-
-```cpp
-void converter(uint8_t* buffer, uint32_t value, int n)
-```
-
-to convert an integer back into bytes before writing it to the disk image.
-
-This is used when updating:
-
-- Inode file size
-- Inode block pointers
-- Block Group Descriptor free-block count
-- Superblock free-block count
+- File reading uses only the 12 direct inode block pointers.
+- File updating uses only the 12 direct inode block pointers.
+- Files requiring indirect blocks cannot currently be read or updated by those functions.
+- Directory traversal supports direct, single-indirect, double-indirect, and triple-indirect blocks.
+- The filesystem image path is currently hard-coded.
+- The implementation is designed around the project's EXT2 filesystem image rather than being a complete general-purpose EXT2 implementation.
+- The program does not implement every EXT2 filesystem feature.
 
 ---
 
-## Technologies Used
+# Project Goal
 
-- C++
-- File streams (`fstream`)
-- Binary file I/O
-- EXT2 filesystem structures
-- Recursion
-- Bitmaps
-- Inode and block-pointer handling
+The main goal of this project is to understand how a filesystem works internally by interacting directly with a raw filesystem image.
 
----
-
-## Project Goal
-
-The goal of this project is to understand how a filesystem works internally by directly interacting with an EXT2 disk image.
-
-Instead of using normal filesystem functions such as:
-
-```cpp
-fopen()
-fread()
-fwrite()
-```
-
-on normal files, the program manually locates:
+Instead of simply asking the operating system to open a file, the program manually performs the process:
 
 ```text
+Raw Disk Image
+      |
+      v
 Superblock
-    ↓
-Block Group Descriptor
-    ↓
-Inode Table
-    ↓
-Inode
-    ↓
+      |
+      v
+Block Groups
+      |
+      v
+Bitmaps + Inode Tables
+      |
+      v
+Inodes
+      |
+      v
+Directory Entries
+      |
+      v
 Data Blocks
-    ↓
-Directory Entries / File Contents
+      |
+      v
+File Contents
 ```
 
-This demonstrates how an operating system can locate, read, and modify files using filesystem metadata.
+The project demonstrates how filesystem metadata connects a filename to the actual bytes stored on disk.
+
+It also demonstrates why modifying a filesystem requires more than simply changing file data: **metadata such as block allocation information, inode size, block pointers, and free-block counters must also be kept consistent.**
+
+---
+
+# Safety
+
+Because the program opens the filesystem image with write permissions, incorrect modifications can corrupt the image.
+
+Always keep a backup of:
+
+```text
+disk-backpup.img
+```
+
+before testing:
+
+```text
+update
+```
+
+or any other operation that modifies filesystem data.
+
+---
+
+# Technologies Used
+
+- C++
+- `fstream`
+- Binary file I/O
+- EXT2 filesystem structures
+- Inodes
+- Directory entries
+- Block and inode bitmaps
+- Recursion
+- Direct and indirect block handling
+- Low-level byte manipulation
+- Little-endian conversion
