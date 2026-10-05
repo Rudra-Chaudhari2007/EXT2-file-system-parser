@@ -332,6 +332,149 @@ void traverser(Superblock sb,Block_Group_Descriptor bgd,ifstream& file,uint32_t 
     }
 }
 
+uint32_t find_file(Superblock sb,Block_Group_Descriptor bgd,ifstream& file,uint32_t n,string name)
+{
+    uint32_t block_group =(n - 1) / sb.inodes_per_group;
+    uint32_t index =(n - 1) % sb.inodes_per_group;
+
+    bgd = read_block_group_descriptor(bgd,file,block_group);
+
+    uint32_t block_size =1024 << sb.log_block_size;
+
+    uint64_t inode_position =(uint64_t)bgd.a_inode_table * block_size + (uint64_t)index * sb.inode_size;
+    file.seekg(inode_position);
+
+    uint8_t inode_buffer[sb.inode_size];
+    file.read((char*)inode_buffer,sb.inode_size);
+
+    uint32_t pointer[15];
+
+    for(int i = 0; i < 15; i++)
+    {
+        pointer[i] = converter(inode_buffer + 40 + (i*4),4);
+    }
+
+    // Check direct blocks
+    for(int i = 0; i < 12; i++)
+    {
+        if(pointer[i] == 0)
+            continue;
+
+        uint64_t block_position =(uint64_t)pointer[i] * block_size;
+
+        file.seekg(block_position);
+
+        uint8_t buffer[block_size];
+
+        file.read((char*)buffer,block_size);
+
+        uint32_t len = 0;
+
+        while(len < block_size)
+        {
+            uint32_t entry_inode =converter(buffer + len, 4);
+            uint32_t rec_len = converter(buffer + len + 4, 2);
+            uint32_t name_len = converter(buffer + len + 6, 1);
+
+            if(rec_len < 8)
+            break;
+
+            if(len + rec_len > block_size)
+            break;
+
+            if(entry_inode != 0)
+            {
+                string entry_name =name_converter(buffer + len + 8,name_len);
+
+                if(entry_name == name)
+                {
+                    return entry_inode;
+                }
+            }
+
+            len += rec_len;
+        }
+    }
+
+    return 0;
+}
+
+uint32_t change_directory(Superblock sb,Block_Group_Descriptor bgd,ifstream& file,uint32_t n,string name)
+{
+    uint32_t block_group =(n-1) / sb.inodes_per_group;
+
+    uint32_t index =(n- 1) % sb.inodes_per_group;
+
+    bgd = read_block_group_descriptor(bgd,file,block_group);
+
+    uint32_t block_size =1024 << sb.log_block_size;
+
+    uint64_t inode_position =(uint64_t)bgd.a_inode_table * block_size +(uint64_t)index * sb.inode_size;
+
+    file.seekg(inode_position);
+
+    uint8_t inode_buffer[sb.inode_size];
+
+    file.read((char*)inode_buffer, sb.inode_size);
+
+    uint32_t pointer[15];
+
+    for(int i = 0; i < 15; i++)
+    {
+        pointer[i] =converter(inode_buffer + 40 +(i*4),4);
+    }
+
+    // Check directory blocks
+    for(int i = 0; i < 12; i++)
+    {
+        if(pointer[i] == 0)
+        continue;
+
+        file.seekg((uint64_t)pointer[i] * block_size);
+
+        uint8_t buffer[block_size];
+
+        file.read((char*)buffer,block_size);
+
+        uint32_t len = 0;
+
+        while(len < block_size)
+        {
+            uint32_t entry_inode =converter(buffer + len, 4);
+            uint32_t rec_len =converter(buffer + len + 4, 2);
+            uint32_t name_len =converter(buffer + len + 6, 1);
+            uint32_t file_type =converter(buffer + len + 7, 1);
+
+            if(rec_len < 8 || len + rec_len > block_size)
+            break;
+
+            if(entry_inode != 0)
+            {
+                string entry_name = name_converter(buffer+ len + 8, name_len);
+
+                if(entry_name == name)
+                {
+                    if(file_type == 2)
+                    {
+                        cout << "changed directory to: " << name << endl;
+                        return entry_inode;
+                    }
+                    else
+                    {
+                        cout << name << " is not a directory!" << endl;
+                        return 0;
+                    }
+                }
+            }
+            len += rec_len;
+        }
+    }
+
+    cout << "Directory not found!" << endl;
+
+    return 0;
+}
+
 
 int main()
 {
@@ -352,6 +495,7 @@ int main()
 
     string s = "";
     
+    uint32_t current_dir =2;
     while("Aura")
     {
         cout << "prompt => " ;
@@ -371,6 +515,19 @@ int main()
 
         else if(s == "exit")
         break;
+
+        else if(s == "cd")
+        {
+            string r;
+            cin >> r;
+            uint32_t a = change_directory(sb,bgd,file,current_dir,r);
+            if(a)
+            {
+                current_dir = a;
+            }
+            else
+            continue;
+        }
 
         else
         {
