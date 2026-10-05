@@ -24,7 +24,7 @@ struct Superblock
 
 struct Block_Group_Descriptor
 {
-    uint32_t a_block_usage_bitmap;    
+    uint32_t a_block_usage_bitmap;
     uint32_t a_inode_usage_bitmap;
     uint32_t a_inode_table;
     uint32_t n_unallocated_blocks;
@@ -60,7 +60,16 @@ string name_converter(uint8_t* buffer, uint32_t n)
     return s;
 }
 
-Superblock read_superblock(Superblock sb , ifstream& file)
+void converter(uint8_t* buffer, uint32_t value, int n)
+{
+    for(int i = 0; i < n; i++)
+    {
+        buffer[i] = value & 255;
+        value = value >> 8;
+    }
+}
+
+Superblock read_superblock(Superblock sb , fstream& file)
 {
     file.seekg(1024);
     uint8_t buffer[100];
@@ -84,7 +93,7 @@ Superblock read_superblock(Superblock sb , ifstream& file)
         
         return sb;
         
-    }
+}
     
     void print_superblock(Superblock sb)
 {
@@ -105,7 +114,7 @@ Superblock read_superblock(Superblock sb , ifstream& file)
 
 }
 
-Block_Group_Descriptor read_block_group_descriptor(Block_Group_Descriptor bgd, ifstream& file, int i)
+Block_Group_Descriptor read_block_group_descriptor(Block_Group_Descriptor bgd, fstream& file, int i)
 {
     file.seekg(2048 + 32*i);
 
@@ -122,7 +131,7 @@ Block_Group_Descriptor read_block_group_descriptor(Block_Group_Descriptor bgd, i
     return bgd;
 }
 
-void print_block_group_descriptor(Block_Group_Descriptor bgd, ifstream& file, int i)
+void print_block_group_descriptor(Block_Group_Descriptor bgd, fstream& file, int i)
 {
     cout << "=========Block" << i << "==========" << endl;
 
@@ -137,7 +146,7 @@ void print_block_group_descriptor(Block_Group_Descriptor bgd, ifstream& file, in
 
 }
 
-void read_file(Superblock sb,Block_Group_Descriptor bgd,ifstream& file,uint32_t n)
+void read_file(Superblock sb,Block_Group_Descriptor bgd,fstream& file,uint32_t n)
 {
     uint32_t block_size =1024 << sb.log_block_size;
 
@@ -187,9 +196,9 @@ void read_file(Superblock sb,Block_Group_Descriptor bgd,ifstream& file,uint32_t 
     }
 }
 
-void traverser(Superblock sb,Block_Group_Descriptor bgd,ifstream& file,uint32_t n,int depth);
+void traverser(Superblock sb,Block_Group_Descriptor bgd,fstream& file,uint32_t n,int depth);
 
-void process_block(Superblock sb,Block_Group_Descriptor bgd,ifstream& file,uint32_t block,int depth)
+void process_block(Superblock sb,Block_Group_Descriptor bgd,fstream& file,uint32_t block,int depth)
 {
     uint32_t block_size = 1024 << sb.log_block_size;
 
@@ -254,7 +263,7 @@ void process_block(Superblock sb,Block_Group_Descriptor bgd,ifstream& file,uint3
     
 }
 
-void process_indirect(Superblock sb,Block_Group_Descriptor bgd,ifstream& file,uint32_t block,int level,int depth)
+void process_indirect(Superblock sb,Block_Group_Descriptor bgd,fstream& file,uint32_t block,int level,int depth)
 {
     uint32_t block_size = 1024 << sb.log_block_size;
 
@@ -285,7 +294,7 @@ void process_indirect(Superblock sb,Block_Group_Descriptor bgd,ifstream& file,ui
 }
 
 
-void traverser(Superblock sb,Block_Group_Descriptor bgd,ifstream& file,uint32_t n,int depth)
+void traverser(Superblock sb,Block_Group_Descriptor bgd,fstream& file,uint32_t n,int depth)
 {
     uint32_t block_group =(n - 1) / sb.inodes_per_group;
     uint32_t index =(n - 1) % sb.inodes_per_group;
@@ -332,7 +341,7 @@ void traverser(Superblock sb,Block_Group_Descriptor bgd,ifstream& file,uint32_t 
     }
 }
 
-uint32_t find_file(Superblock sb,Block_Group_Descriptor bgd,ifstream& file,uint32_t n,string name)
+uint32_t find_file(Superblock sb,Block_Group_Descriptor bgd,fstream& file,uint32_t n,string name)
 {
     uint32_t block_group =(n - 1) / sb.inodes_per_group;
     uint32_t index =(n - 1) % sb.inodes_per_group;
@@ -363,7 +372,6 @@ uint32_t find_file(Superblock sb,Block_Group_Descriptor bgd,ifstream& file,uint3
         uint64_t block_position =(uint64_t)pointer[i] * block_size;
 
         file.seekg(block_position);
-
         uint8_t buffer[block_size];
 
         file.read((char*)buffer,block_size);
@@ -399,14 +407,12 @@ uint32_t find_file(Superblock sb,Block_Group_Descriptor bgd,ifstream& file,uint3
     return 0;
 }
 
-uint32_t change_directory(Superblock sb,Block_Group_Descriptor bgd,ifstream& file,uint32_t n,string name)
+uint32_t change_directory(Superblock sb,Block_Group_Descriptor bgd,fstream& file,uint32_t n,string name)
 {
     uint32_t block_group =(n-1) / sb.inodes_per_group;
-
     uint32_t index =(n- 1) % sb.inodes_per_group;
 
     bgd = read_block_group_descriptor(bgd,file,block_group);
-
     uint32_t block_size =1024 << sb.log_block_size;
 
     uint64_t inode_position =(uint64_t)bgd.a_inode_table * block_size +(uint64_t)index * sb.inode_size;
@@ -414,11 +420,9 @@ uint32_t change_directory(Superblock sb,Block_Group_Descriptor bgd,ifstream& fil
     file.seekg(inode_position);
 
     uint8_t inode_buffer[sb.inode_size];
-
     file.read((char*)inode_buffer, sb.inode_size);
 
     uint32_t pointer[15];
-
     for(int i = 0; i < 15; i++)
     {
         pointer[i] =converter(inode_buffer + 40 +(i*4),4);
@@ -433,7 +437,6 @@ uint32_t change_directory(Superblock sb,Block_Group_Descriptor bgd,ifstream& fil
         file.seekg((uint64_t)pointer[i] * block_size);
 
         uint8_t buffer[block_size];
-
         file.read((char*)buffer,block_size);
 
         uint32_t len = 0;
@@ -476,9 +479,218 @@ uint32_t change_directory(Superblock sb,Block_Group_Descriptor bgd,ifstream& fil
 }
 
 
+//1
+uint32_t find_free_block(Superblock sb,Block_Group_Descriptor bgd,fstream& file,uint32_t block_group)
+{
+    uint32_t block_size =1024 << sb.log_block_size;
+  
+    bgd = read_block_group_descriptor(bgd, file, block_group);
+    file.seekg((uint64_t)bgd.a_block_usage_bitmap * block_size);
+
+    uint8_t buffer[block_size];
+
+    file.read((char*)buffer,block_size);
+
+    // First block belonging to this group
+    uint32_t first_block =sb.first_data_block +block_group * sb.blocks_per_group;
+
+    // Check every bit in the bitmap
+    for(uint32_t i = 0; i < sb.blocks_per_group; i++)
+    {
+        uint32_t byte = i / 8;
+        uint32_t bit = i % 8;
+
+        // Bit is 0 -> block is free
+        if((buffer[byte] & (1 << bit)) == 0)
+        {
+            uint32_t actual_block =first_block + i;
+
+            return actual_block;
+        }
+    }
+
+    return 0;
+}
+
+uint32_t allocate_block(Superblock& sb,Block_Group_Descriptor& bgd,fstream& file,uint32_t block_group)
+{
+    uint32_t block_size =1024 << sb.log_block_size;
+    uint32_t block = find_free_block(sb,bgd,file,block_group);
+
+    if(block == 0)
+    {
+        return 0;
+    }
+
+    uint32_t first_block =sb.first_data_block + block_group * sb.blocks_per_group;
+
+    uint32_t i =block - first_block;
+    uint32_t byte = i/8;
+    uint32_t bit = i%8;
+
+    file.seekg((uint64_t)bgd.a_block_usage_bitmap * block_size);
+
+    uint8_t buffer[block_size];
+    file.read((char*)buffer,block_size);
+
+    buffer[byte] |= (1 << bit);
+
+    file.seekp((uint64_t)bgd.a_block_usage_bitmap * block_size);
+
+    file.write((char*)buffer,block_size);
+
+    bgd.n_unallocated_blocks--;
+    sb.free_blocks_count--;
+
+    file.seekp(2048 + 32 * block_group + 12);
+
+    uint8_t bgd_buffer[2];
+
+    converter(bgd_buffer,bgd.n_unallocated_blocks,2);
+
+    file.write((char*)bgd_buffer,2);
+
+    file.seekp(1024 + 12);
+
+    uint8_t sb_buffer[4];
+    converter(sb_buffer,sb.free_blocks_count,4);
+
+    file.write((char*)sb_buffer,4);
+
+    return block;
+}
+
+void update_inode_size(fstream& file,uint64_t inode_position,uint32_t new_size)
+{
+    uint8_t buffer[4];
+    converter(buffer, new_size, 4);
+    file.seekp(inode_position + 4);
+
+    file.write((char*)buffer,4);
+}
+
+void update_file(Superblock& sb,Block_Group_Descriptor bgd,fstream& file,uint32_t inode_number,string data,bool append)
+{
+    uint32_t block_group = (inode_number - 1) / sb.inodes_per_group;
+    uint32_t index =(inode_number - 1) % sb.inodes_per_group;
+
+    bgd = read_block_group_descriptor(bgd,file,block_group);
+
+    uint32_t block_size =1024 << sb.log_block_size;
+    uint64_t inode_position =(uint64_t)bgd.a_inode_table * block_size + (uint64_t)index * sb.inode_size;
+
+    file.seekg(inode_position);
+
+    uint8_t inode_buffer[sb.inode_size];
+    file.read((char*)inode_buffer,sb.inode_size);
+
+    uint32_t old_size = converter(inode_buffer + 4,4);
+
+    uint32_t pointer[15];
+    for(int i=0;i<15;i++)
+    {
+        pointer[i] =converter(inode_buffer + 40 +(i*4), 4);
+    }
+
+    uint32_t start_position;
+    uint32_t new_size;
+
+    if(append)
+    {
+        start_position = old_size;
+
+        if(old_size > 0)
+        {
+            file.seekg(
+                (uint64_t)pointer[0] * block_size + old_size - 1
+            );
+
+            char last_character;
+
+            file.read(&last_character, 1);
+
+            if(last_character == '\n')
+            {
+                start_position = old_size - 1;
+                new_size = old_size - 1 + data.size();
+            }
+            else
+            {
+                new_size = old_size + data.size();
+            }
+        }
+        else
+        {
+            new_size = data.size();
+        }
+    }
+    else
+    {
+        start_position = 0;
+        new_size = data.size();
+    }
+
+    uint32_t required_blocks = (new_size + block_size - 1) / block_size;
+    uint32_t existing_blocks = 0;
+
+    for(int i=0;i<12;i++)
+    {
+        if(pointer[i] != 0)
+        existing_blocks++;
+    }
+
+    for(int i = existing_blocks; i < required_blocks;i++)
+    {
+        uint32_t new_block =allocate_block(sb,bgd,file,block_group);
+
+        if(new_block == 0)
+        {
+            cout << "No free blocks available!" << endl;
+            return;
+        }
+
+        pointer[i] = new_block;
+        file.seekp(inode_position + 40 + (i * 4));
+
+        uint8_t buffer[4];
+        converter(buffer,new_block,4);
+
+        file.write((char*)buffer,4);
+    }
+
+    uint32_t position = start_position;
+    uint32_t data_position = 0;
+    uint32_t remaining = data.size();
+
+    while(remaining > 0)
+    {
+        uint32_t block_number = position/block_size;
+
+        uint32_t offset =position % block_size;
+
+        uint32_t bytes_to_write = block_size - offset;
+
+        if(bytes_to_write > remaining)
+        bytes_to_write = remaining;
+
+        uint32_t actual_block =
+        pointer[block_number];
+
+        file.seekp((uint64_t)actual_block * block_size+ offset);
+
+        file.write(data.data() + data_position,bytes_to_write);
+
+        position += bytes_to_write;
+        data_position += bytes_to_write;
+        remaining -= bytes_to_write;
+    }
+
+    update_inode_size(file,inode_position,new_size);
+}
+
 int main()
 {
-    ifstream file ("/home/rudra/projects/disk-backpup.img" , ios :: binary);
+    fstream file ("/home/rudra/projects/disk-backpup.img" , ios :: in | ios :: out | ios :: binary);
 
     if(!file)
     {
@@ -496,7 +708,7 @@ int main()
     string s = "";
     
     uint32_t current_dir =2;
-    while("Aura")
+    while("WEC")
     {
         cout << "prompt => " ;
         cin >> s;
@@ -527,6 +739,67 @@ int main()
             }
             else
             continue;
+        }
+
+        else if(s == "update")
+        {
+            cout << "Enter Filename: ";
+            string fn;
+            cin >> fn; cout << endl;
+            uint32_t inode_number = find_file(sb,bgd,file,current_dir,fn);
+            if(!inode_number)
+            {
+                cout << "File Not Found" << endl;
+                continue;
+            }
+            int choice;
+
+            cout << "1. Overwrite" << endl;
+            cout << "2. Append" << endl;
+            cout << "Enter choice: ";
+
+            cin >> choice;
+
+            if(choice >2)
+            {
+                cout << "Invalid Choice" << endl;
+                cout << endl;
+                continue;
+            }
+            string data;
+
+            cout << "Enter data: ";
+            cin.ignore();
+            getline(cin, data);
+            data += '\n';
+
+            //if(inode_number != 0)
+
+            if(choice == 1)
+            {
+                update_file(sb,bgd,file,inode_number,data,false);
+            }
+            else if(choice == 2)
+            {
+                update_file(sb,bgd,file,inode_number,data,true);
+            }
+
+        }
+
+        else if(s == "read")
+        {
+            string fn;
+            cin >> fn;
+
+            uint32_t a = find_file(sb,bgd,file,current_dir,fn);
+
+            if(a)
+            read_file(sb,bgd,file,a);
+            else
+            {
+                cout << "File Not Found!!" << endl;
+                cout << endl;
+            }
         }
 
         else
